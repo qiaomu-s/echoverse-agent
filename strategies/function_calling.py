@@ -100,7 +100,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         iteration_step = 1
         max_iteration_steps = fc_params.maximum_iterations
         current_thoughts: list[PromptMessage] = []
-        function_call_state = True  # continue to run until there is not any tool call
+        function_call_state = True  # 运行直到没有工具调用
         llm_usage: dict[str, Optional[LLMUsage]] = {"usage": None}
         final_answer = ""
 
@@ -428,7 +428,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 for resp in tool_responses:
                     yield self.create_text_message(resp["tool_response"])
             iteration_step += 1
-            
+
         # 返回执行消耗
         yield self.create_json_message(
             {
