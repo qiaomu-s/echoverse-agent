@@ -56,6 +56,9 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         """
         Run FunctionCall agent application
         """
+        # 打印一条分割线
+        print("========================================")
+
         fc_params = FunctionCallingParams(**parameters)
 
         # init prompt messages
@@ -68,11 +71,13 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
         # convert tool messages
         tools = fc_params.tools
+
         tool_instances = {tool.identity.name: tool for tool in tools} if tools else {}
         
         # 初始化工具
-        # 这里的工具实例是从工具列表中获取的
+        # 这里的工具实例是从工具列表中获取的 PromptMessageTool
         prompt_messages_tools = self._init_prompt_tools(tools)
+
 
         # init model parameters
 
@@ -163,9 +168,12 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             tool_call_names = ""
 
             current_llm_usage = None
+            print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
+            print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
 
             if isinstance(chunks, Generator):
                 for chunk in chunks:
+                    # print(f"ROUND {iteration_step} chunk: {chunk}")
                     # 检查是否有工具调用
                     if self.check_tool_calls(chunk):
                         function_call_state = True
@@ -173,7 +181,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         tool_call_names = ";".join(
                             [tool_call[1] for tool_call in tool_calls]
                         )
-
+                    
                     if chunk.delta.message and chunk.delta.message.content:
                         if isinstance(chunk.delta.message.content, list):
                             for content in chunk.delta.message.content:
@@ -196,7 +204,6 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     if chunk.delta.usage:
                         self.increase_usage(llm_usage, chunk.delta.usage)
                         current_llm_usage = chunk.delta.usage
-
             else:
                 result = chunks
                 result = cast(LLMResult, result)
@@ -207,6 +214,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     tool_call_names = ";".join(
                         [tool_call[1] for tool_call in tool_calls]
                     )
+
 
                 if result.usage:
                     self.increase_usage(llm_usage, result.usage)
@@ -259,10 +267,12 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 current_thoughts.append(assistant_message)
 
             final_answer += response + "\n"
-
-            # call tools
+            print(f"ROUND {iteration_step} final_answer: {final_answer}")
+            print(f"ROUND {iteration_step} tool_calls: {tool_calls}")
+            # 调用工具
             tool_responses = []
             for tool_call_id, tool_call_name, tool_call_args in tool_calls:
+                # 添加工具调用到当前思考中
                 current_thoughts.append(
                     AssistantPromptMessage(
                         content="",
@@ -280,8 +290,11 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         ],
                     )
                 )
-                tool_instance = tool_instances[tool_call_name]
+                # 工具实例
+                tool_instance = tool_instances.get(tool_call_name)
                 tool_call_started_at = time.perf_counter()
+
+                # 记录工具调用日志
                 tool_call_log = self.create_log_message(
                     label=f"CALL {tool_call_name}",
                     data={},
@@ -303,7 +316,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         ).to_dict(),
                     }
                 else:
-                    # invoke tool
+                    # 执行工具
                     try:
                         tool_invoke_responses = self.session.tool.invoke(
                             provider_type=ToolProviderType(tool_instance.provider_type),
@@ -315,6 +328,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             },
                         )
                         result = ""
+                        # 处理工具调用的响应
                         for response in tool_invoke_responses:
                             if response.type == ToolInvokeMessage.MessageType.TEXT:
                                 result += cast(
@@ -370,6 +384,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 )
                 tool_responses.append(tool_response)
                 if tool_response["tool_response"] is not None:
+                    # 添加工具响应到当前思考中
                     current_thoughts.append(
                         ToolPromptMessage(
                             content=str(tool_response["tool_response"]),
@@ -378,11 +393,12 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         )
                     )
 
-            # update prompt tool
+            # 更新工具提示词 (暂时没发现作用)
             for prompt_tool in prompt_messages_tools:
                 self.update_prompt_message_tool(
                     tool_instances[prompt_tool.name], prompt_tool
                 )
+            print(f"ROUND {iteration_step} updated prompt_messages_tools: {prompt_messages_tools}")
             yield self.finish_log_message(
                 log=round_log,
                 data={
@@ -406,11 +422,14 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     else 0,
                 },
             )
-            # If max_iteration_steps=1, need to return tool responses
+
+            # 如果迭代次数为1，则直接返回工具响应
             if tool_responses and max_iteration_steps == 1:
                 for resp in tool_responses:
                     yield self.create_text_message(resp["tool_response"])
             iteration_step += 1
+            
+        # 返回执行消耗
         yield self.create_json_message(
             {
                 "execution_metadata": {

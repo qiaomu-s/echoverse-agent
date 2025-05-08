@@ -2,13 +2,13 @@ identity:
   author: echoverse
   name: agent
   label:
-    en_US: Agent
-    zh_Hans: Agent
-    pt_BR: Agent
+    en_US: EchoVerseAgent
+    zh_Hans: EchoVerseAgent
+    pt_BR: EchoVerseAgent
   description:
-    en_US: Agent
-    zh_Hans: Agent
-    pt_BR: Agent
+    en_US: EchoVerseAgent
+    zh_Hans: EchoVerseAgent
+    pt_BR: EchoVerseAgent
   icon: icon.svg
 strategies:
   - strategies/function_calling.yaml

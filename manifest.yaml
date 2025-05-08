@@ -3,13 +3,13 @@ type: plugin
 author: "echoverse"
 name: "agent"
 label:
-  en_US: "Dify Agent Strategies"
-  zh_Hans: "Dify Agent 策略"
+  en_US: "EchoVerse Agent Strategies"
+  zh_Hans: "EchoVerse Agent 策略"
 created_at: "2025-01-08T15:22:00.000000000Z"
 icon: icon.svg
 description:
-  en_US: Dify official Agent strategies collection
-  zh_Hans: Dify 官方 Agent 策略集合
+  en_US: EchoVerse official Agent strategies collection
+  zh_Hans: EchoVerse 官方 Agent 策略集合
 tags:
   - "agent"
 resource:
