@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 
 class FunctionCallingParams(BaseModel):
+    api_key: str
     query: str
     instruction: str | None
     model: AgentModelConfig
@@ -65,12 +66,15 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         fc_params = FunctionCallingParams(**parameters)
 
         # init prompt messages
+        api_key = fc_params.api_key  # 这里的api_key是从参数中获取的
         query = fc_params.query
         self.query = query
         self.instruction = fc_params.instruction
         history_prompt_messages = fc_params.model.history_prompt_messages
         history_prompt_messages.insert(0, self._system_prompt_message)
         history_prompt_messages.append(self._user_prompt_message)
+
+        print(f"api_key: {api_key}")
 
         # convert tool messages
         tools = fc_params.tools

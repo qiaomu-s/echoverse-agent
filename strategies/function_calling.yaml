@@ -12,6 +12,21 @@ description:
 features:
   - history-messages
 parameters:
+  - name: api_key
+    type: string
+    required: false
+    label:
+      en_US: API Key
+      zh_Hans: API 密钥
+      pt_BR: API Key
+    human_description:
+      en_US: API Key for the model.
+      zh_Hans: 模型的 API 密钥。
+      pt_BR: API Key for the model.
+    placeholder:
+      en_US: Enter your API Key
+      zh_Hans: 输入您的 API 密钥
+      pt_BR: Enter your API Key
   - name: model
     type: model-selector
     scope: tool-call&llm
