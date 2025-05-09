@@ -19,6 +19,7 @@ from dify_plugin.entities.model.message import (
     SystemPromptMessage,
     ToolPromptMessage,
     UserPromptMessage,
+    PromptMessageTool
 )
 from dify_plugin.entities.tool import LogMetadata, ToolInvokeMessage, ToolProviderType
 from dify_plugin.interfaces.agent import (
@@ -37,6 +38,8 @@ class FunctionCallingParams(BaseModel):
     tools: list[ToolEntity] | None
     maximum_iterations: int = 3
 
+class IotToolEntity(PromptMessageTool):
+    iot_name: str
 
 class FunctionCallingAgentStrategy(AgentStrategy):
     def __init__(self, session):
@@ -77,6 +80,16 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         # 初始化工具
         # 这里的工具实例是从工具列表中获取的 PromptMessageTool
         prompt_messages_tools = self._init_prompt_tools(tools)
+
+        # 测试tools 
+        deng1 = IotToolEntity(name="deng1",iot_name="Lamp", description="一个测试用的灯 - 打开灯", parameters={"type": "object", "properties": {"iot_name": {"type": "string", "description": "Lamp的标识名称"}}, "required": []})
+        deng2 = IotToolEntity(name="deng2",iot_name="Lamp",  description="一个测试用的灯 - 关闭灯", parameters={"type": "object", "properties": {"iot_name": {"type": "string", "description": "Lamp的标识名称"}}, "required": []})
+
+        speaker = IotToolEntity(name="speaker",iot_name="Speaker", description="扬声器 - 设置音量", parameters={"type": "object", "properties": {"volume": {"description": "0到100之间的整数", "type": "number"}}, "required": []})
+
+        prompt_messages_tools.append(deng1)
+        prompt_messages_tools.append(deng2)
+        prompt_messages_tools.append(speaker)
 
 
         # init model parameters
@@ -135,6 +148,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 self.recalc_llm_max_tokens(
                     model.entity, prompt_messages, model.completion_params
                 )
+
             # 执行模型
             model_started_at = time.perf_counter()
             model_log = self.create_log_message(
@@ -300,21 +314,55 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     data={},
                     metadata={
                         LogMetadata.STARTED_AT: time.perf_counter(),
-                        LogMetadata.PROVIDER: tool_instance.identity.provider,
+                        LogMetadata.PROVIDER: tool_instance.identity.provider if tool_instance else "unknown",
                     },
                     parent=round_log,
                     status=ToolInvokeMessage.LogMessage.LogStatus.START,
                 )
                 yield tool_call_log
                 if not tool_instance:
-                    tool_response = {
-                        "tool_call_id": tool_call_id,
-                        "tool_call_name": tool_call_name,
-                        "tool_response": f"there is not a tool named {tool_call_name}",
-                        "meta": ToolInvokeMeta.error_instance(
-                            f"there is not a tool named {tool_call_name}"
-                        ).to_dict(),
-                    }
+                    # 判断是否在prompt_messages_tools中且有是IotToolEntity  这里是IOT设备调用
+                    iot_instance = next(
+                        (
+                            tool
+                            for tool in prompt_messages_tools
+                            if tool.name == tool_call_name
+                            and isinstance(tool, IotToolEntity)
+                        ),
+                        None,
+                    )
+
+                    if iot_instance:
+                        # 这里是IOT设备调用 http请求
+
+
+                        # 添加工具响应到当前思考中
+                        current_thoughts.append(
+                        ToolPromptMessage(
+                            content=str('success'),  # 工具响应
+                            tool_call_id=tool_call_id,
+                            name=tool_call_name,
+                            )
+                        )
+                        tool_response = {
+                            "tool_call_id": tool_call_id,
+                            "tool_call_name": tool_call_name,
+                            "tool_call_input": {
+                                # **tool_instance.runtime_parameters,
+                                **tool_call_args,
+                            },
+                            "tool_response": 'success',
+                        }
+                    else:
+                        tool_response = {
+                            "tool_call_id": tool_call_id,
+                            "tool_call_name": tool_call_name,
+                            "tool_response": f"there is not a tool named {tool_call_name}",
+                            "meta": ToolInvokeMeta.error_instance(
+                                f"there is not a tool named {tool_call_name}"
+                            ).to_dict(),
+                        }
+                        
                 else:
                     # 执行工具
                     try:
@@ -368,6 +416,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         },
                         "tool_response": result,
                     }
+                    print(f"ROUND {iteration_step} runtime_parameters: {tool_instance.runtime_parameters}")
+                    print(f"ROUND {iteration_step} tool_call_args: {tool_call_args}")
 
                 yield self.finish_log_message(
                     log=tool_call_log,
@@ -376,7 +426,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     },
                     metadata={
                         LogMetadata.STARTED_AT: tool_call_started_at,
-                        LogMetadata.PROVIDER: tool_instance.identity.provider,
+                        LogMetadata.PROVIDER: tool_instance.identity.provider if tool_instance else "unknown",
                         LogMetadata.FINISHED_AT: time.perf_counter(),
                         LogMetadata.ELAPSED_TIME: time.perf_counter()
                         - tool_call_started_at,
@@ -395,9 +445,10 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
             # 更新工具提示词 (暂时没发现作用)
             for prompt_tool in prompt_messages_tools:
-                self.update_prompt_message_tool(
-                    tool_instances[prompt_tool.name], prompt_tool
-                )
+                if tool_instances.get(prompt_tool.name):
+                    self.update_prompt_message_tool(
+                        tool_instances[prompt_tool.name], prompt_tool
+                    )
             print(f"ROUND {iteration_step} updated prompt_messages_tools: {prompt_messages_tools}")
             yield self.finish_log_message(
                 log=round_log,
