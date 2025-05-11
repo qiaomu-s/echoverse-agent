@@ -27,6 +27,51 @@ parameters:
       en_US: Enter your API Key
       zh_Hans: 输入您的 API 密钥
       pt_BR: Enter your API Key
+  - name: device_id
+    type: string
+    required: false
+    label:
+      en_US: Device ID
+      zh_Hans: 设备 ID
+      pt_BR: Device ID
+    human_description:
+      en_US: Device ID for the model.
+      zh_Hans: 模型的设备 ID。
+      pt_BR: Device ID for the model.
+    placeholder:
+      en_US: Enter your Device ID
+      zh_Hans: 输入您的设备 ID
+      pt_BR: Enter your Device ID
+  - name: iot_control_devices
+    type: string
+    required: false
+    label:
+      en_US: IoT Control Devices
+      zh_Hans: IoT 控制设备
+      pt_BR: IoT Control Devices
+    human_description:
+      en_US: List of devices to control.
+      zh_Hans: 要控制的设备列表。
+      pt_BR: List of devices to control.
+    placeholder:
+      en_US: Enter your IoT Control Devices
+      zh_Hans: 输入您的 IoT 控制设备
+      pt_BR: Enter your IoT Control Devices
+  - name: iot_control_devices_status
+    type: string
+    required: false
+    label:
+      en_US: IoT Control Devices Status
+      zh_Hans: IoT 控制设备状态
+      pt_BR: IoT Control Devices Status
+    human_description:
+      en_US: Status of the devices to control.
+      zh_Hans: 要控制的设备状态。
+      pt_BR: Status of the devices to control.
+    placeholder:
+      en_US: Enter your IoT Control Devices Status
+      zh_Hans: 输入您的 IoT 控制设备状态
+      pt_BR: Enter your IoT Control Devices Status
   - name: model
     type: model-selector
     scope: tool-call&llm
