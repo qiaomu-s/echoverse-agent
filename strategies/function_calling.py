@@ -35,7 +35,6 @@ api_host = "www.label-studio.top"
 class FunctionCallingParams(BaseModel):
     api_key: str
     device_id: str
-    iot_control_devices: Optional[str] = None  # Added field for local IoT devices JSON string
     query: str
     instruction: str | None
     model: AgentModelConfig
@@ -71,7 +70,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         # init prompt messages
         api_key = fc_params.api_key  # 这里的api_key是从参数中获取的
         device_id = fc_params.device_id # 设备id
-        iot_control_devices = fc_params.iot_control_devices
+
         query = fc_params.query
         self.query = query
         self.instruction = fc_params.instruction
@@ -90,69 +89,6 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         # 这里的工具实例是从工具列表中获取的 PromptMessageTool
         prompt_messages_tools = self._init_prompt_tools(tools)
 
-        # Process locally provided IoT control devices string if available
-        if fc_params.iot_control_devices:
-            print(f"Processing locally provided IoT control devices: {fc_params.iot_control_devices}")
-            try:
-                local_iot_devices_data = json.loads(fc_params.iot_control_devices)
-                if isinstance(local_iot_devices_data, list):
-                    for tool_data in local_iot_devices_data:
-                        try:
-                            if not isinstance(tool_data, dict):
-                                print(f"Warning: Skipping local IoT device entry as it is not a dictionary. Entry: {tool_data}")
-                                continue
-
-                            # 新格式示例：
-                            # {"type": "function", "iot_name": "Speaker", "function": {"name": "SetVolume", "description": "扬声器 - 设置音量", "parameters": {...}}}
-                            tool_type = tool_data.get("type")
-                            if tool_type != "function":
-                                print(f"Warning: Skipping local IoT tool with unsupported type: {tool_type}. Expected 'function'.")
-                                continue
-                                
-                            iot_name_val = tool_data.get("iot_name")
-                            function_details = tool_data.get("function", {})
-                            
-                            tool_name = function_details.get("name")
-                            tool_description = function_details.get("description")
-                            tool_parameters = function_details.get("parameters")
-                            
-                            # 确保必要的字段存在
-                            if not all([tool_name, iot_name_val, tool_description, tool_parameters is not None]):
-                                print(f"Warning: Skipping local IoT tool due to missing essential fields. Raw tool_data: {tool_data}")
-                                continue
-                            
-                            # 确保 parameters 是一个字典
-                            if not isinstance(tool_parameters, dict):
-                                print(f"Warning: Parameters for local IoT tool '{tool_name}' is not a dict, using empty. Received: {tool_parameters}")
-                                tool_parameters = {}
-                            
-                            # 如果 parameters.properties 中没有 iot_name 字段，添加它
-                            properties = tool_parameters.get("properties", {})
-                            if not properties.get("iot_name"):
-                                properties["iot_name"] = {
-                                    "type": "string", 
-                                    "description": f"{iot_name_val}的标识名称"
-                                }
-                                tool_parameters["properties"] = properties
-                            
-                            # 创建 IotToolEntity 实例
-                            iot_tool = IotToolEntity(
-                                name=str(tool_name),
-                                iot_name=str(iot_name_val),
-                                description=str(tool_description),
-                                parameters=tool_parameters,
-                            )
-                            prompt_messages_tools.append(iot_tool)
-                            print(f"Successfully added local IoT tool: {tool_name} (iot_name: {iot_name_val})")
-                        except Exception as e:
-                            print(f"Error processing individual local IoT device data: {tool_data}. Error: {e}")
-                else:
-                    print(f"Warning: iot_control_devices was not a JSON array string. Value: {fc_params.iot_control_devices}")
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON from iot_control_devices: {e}. Value: {fc_params.iot_control_devices}")
-            except Exception as e:
-                print(f"An unexpected error occurred while processing local IoT devices: {e}")
-
         # Dynamically fetch IoT tools from API only if api_key is present
         if api_key:
             iot_tools_url = f"http://{api_host}/open/iot/device/controlDevices?deviceId={device_id}&apiKey={api_key}"
@@ -169,31 +105,35 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     print(f"Successfully fetched IoT tools data: {iot_data['data']}")
                     for tool_data in iot_data["data"]:
                         try:
-                            control_data = tool_data.get("controlData", {})
-                            function_details = control_data.get("function", {})
-                            
-                            tool_name = function_details.get("name")
-                            iot_name_val = tool_data.get("deviceName")
-                            tool_description = function_details.get("description")
-                            tool_parameters = function_details.get("parameters")
+                            # 处理标准格式工具数据
+                            if tool_data.get("type") == "function" and tool_data.get("function"):
+                                function_details = tool_data.get("function", {})
+                                
+                                tool_name = function_details.get("name")
+                                # 从工具数据获取 iot_name，如果没有则使用空字符串
+                                iot_name_val = tool_data.get("iot_name")
+                                tool_description = function_details.get("description")
+                                tool_parameters = function_details.get("parameters")
 
-                            if not all([tool_name, iot_name_val, tool_description, tool_parameters is not None]):
-                                print(f"Warning: Skipping tool due to missing essential fields. Raw tool_data: {tool_data}")
-                                continue
-                            
-                            # Ensure parameters is a dict, default to empty if not, or if it's not the expected structure
-                            if not isinstance(tool_parameters, dict):
-                                print(f"Warning: Parameters for tool '{tool_name}' is not a dict, using empty. Received: {tool_parameters}")
-                                tool_parameters = {}
+                                if not all([tool_name, tool_description, tool_parameters is not None]):
+                                    print(f"Warning: Skipping tool due to missing essential fields. Raw tool_data: {tool_data}")
+                                    continue
+                                
+                                # Ensure parameters is a dict, default to empty if not, or if it's not the expected structure
+                                if not isinstance(tool_parameters, dict):
+                                    print(f"Warning: Parameters for tool '{tool_name}' is not a dict, using empty. Received: {tool_parameters}")
+                                    tool_parameters = {}
 
-                            iot_tool = IotToolEntity(
-                                name=str(tool_name),
-                                iot_name=str(iot_name_val),
-                                description=str(tool_description),
-                                parameters=tool_parameters,
-                            )
-                            prompt_messages_tools.append(iot_tool)
-                            print(f"Successfully added IoT tool: {tool_name} (iot_name: {iot_name_val})")
+                                iot_tool = IotToolEntity(
+                                    name=str(tool_name),
+                                    iot_name=str(iot_name_val) if iot_name_val else "",
+                                    description=str(tool_description),
+                                    parameters=tool_parameters,
+                                )
+                                prompt_messages_tools.append(iot_tool)
+                                print(f"Successfully added IoT tool: {tool_name} (iot_name: {iot_name_val if iot_name_val else 'N/A'})")
+                            else:
+                                print(f"Warning: Unknown tool data format. Raw tool_data: {tool_data}")
                         except Exception as e:
                             print(f"Error processing individual tool data: {tool_data}. Error: {e}")
                 elif iot_data.get("code") == 1001:
