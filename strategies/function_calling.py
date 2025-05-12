@@ -32,6 +32,16 @@ from dify_plugin.interfaces.agent import (
 from pydantic import BaseModel
 
 api_host = "www.label-studio.top"
+# 控制是否输出调试信息的开关
+DEBUG_MODE = True
+
+def debug_print(*args, **kwargs):
+    """
+    根据DEBUG_MODE的值决定是否打印调试信息
+    """
+    if DEBUG_MODE:
+        print(*args, **kwargs)
+
 class FunctionCallingParams(BaseModel):
     api_key: str
     device_id: str
@@ -40,7 +50,7 @@ class FunctionCallingParams(BaseModel):
     model: AgentModelConfig
     tools: list[ToolEntity] | None 
     maximum_iterations: int = 3
-
+    
 class IotToolEntity(PromptMessageTool):
     iot_name: str
 
@@ -63,10 +73,10 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         Run FunctionCall agent application
         """
         # 打印一条分割线
-        print("========================================")
+        debug_print("========================================")
 
         fc_params = FunctionCallingParams(**parameters)
-   
+           
         # init prompt messages
         api_key = fc_params.api_key  # 这里的api_key是从参数中获取的
         device_id = fc_params.device_id # 设备id
@@ -78,7 +88,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         history_prompt_messages.insert(0, self._system_prompt_message)
         history_prompt_messages.append(self._user_prompt_message)
 
-        print(f"api_key: {api_key}")
+        debug_print(f"api_key: {api_key}")
 
         # convert tool messages
         tools = fc_params.tools
@@ -90,19 +100,26 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         prompt_messages_tools = self._init_prompt_tools(tools)
 
         # Dynamically fetch IoT tools from API only if api_key is present
-        if api_key:
-            iot_tools_url = f"http://{api_host}/open/iot/device/controlDevices?deviceId={device_id}&apiKey={api_key}"
+        if api_key and device_id:
+            # Fetch IoT tools from API
+            iot_tools_url = f"http://{api_host}/open/iot/device/controlDevices"
             iot_payload = {}
-            iot_headers = {}
+            
+            # 设置请求头，包含 X-API-Key 和 X-Device-ID
+            iot_headers = {
+                'X-API-Key': api_key,
+                'X-Device-ID': device_id
+            }
 
             try:
-                print(f"Fetching IoT tools from: {iot_tools_url}")
+                debug_print(f"Fetching IoT tools from: {iot_tools_url}")
+                debug_print(f"Request headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
                 iot_response = requests.request("GET", iot_tools_url, headers=iot_headers, data=iot_payload, timeout=10)
                 iot_response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
                 iot_data = iot_response.json()
 
                 if iot_data.get("code") == 1000 and "data" in iot_data:
-                    print(f"Successfully fetched IoT tools data: {iot_data['data']}")
+                    debug_print(f"Successfully fetched IoT tools data: {iot_data['data']}")
                     for tool_data in iot_data["data"]:
                         try:
                             # 处理标准格式工具数据
@@ -116,12 +133,12 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                                 tool_parameters = function_details.get("parameters")
 
                                 if not all([tool_name, tool_description, tool_parameters is not None]):
-                                    print(f"Warning: Skipping tool due to missing essential fields. Raw tool_data: {tool_data}")
+                                    debug_print(f"Warning: Skipping tool due to missing essential fields. Raw tool_data: {tool_data}")
                                     continue
                                 
                                 # Ensure parameters is a dict, default to empty if not, or if it's not the expected structure
                                 if not isinstance(tool_parameters, dict):
-                                    print(f"Warning: Parameters for tool '{tool_name}' is not a dict, using empty. Received: {tool_parameters}")
+                                    debug_print(f"Warning: Parameters for tool '{tool_name}' is not a dict, using empty. Received: {tool_parameters}")
                                     tool_parameters = {}
 
                                 iot_tool = IotToolEntity(
@@ -131,25 +148,25 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                                     parameters=tool_parameters,
                                 )
                                 prompt_messages_tools.append(iot_tool)
-                                print(f"Successfully added IoT tool: {tool_name} (iot_name: {iot_name_val if iot_name_val else 'N/A'})")
+                                debug_print(f"Successfully added IoT tool: {tool_name} (iot_name: {iot_name_val if iot_name_val else 'N/A'})")
                             else:
-                                print(f"Warning: Unknown tool data format. Raw tool_data: {tool_data}")
+                                debug_print(f"Warning: Unknown tool data format. Raw tool_data: {tool_data}")
                         except Exception as e:
-                            print(f"Error processing individual tool data: {tool_data}. Error: {e}")
+                            debug_print(f"Error processing individual tool data: {tool_data}. Error: {e}")
                 elif iot_data.get("code") == 1001:
-                    print(f"Error fetching IoT tools: API key invalid or other API error. Message: {iot_data.get('message')}")
+                    debug_print(f"Error fetching IoT tools: API key invalid or other API error. Message: {iot_data.get('message')}")
                 else:
-                    print(f"Error fetching IoT tools: {iot_data.get('message', 'Unknown API error')}. Response code: {iot_data.get('code')}")
+                    debug_print(f"Error fetching IoT tools: {iot_data.get('message', 'Unknown API error')}. Response code: {iot_data.get('code')}")
             except requests.exceptions.Timeout:
-                print(f"API request timed out for IoT tools URL: {iot_tools_url}")
+                debug_print(f"API request timed out for IoT tools URL: {iot_tools_url}")
             except requests.exceptions.RequestException as e:
-                print(f"API request failed for IoT tools: {e}")
+                debug_print(f"API request failed for IoT tools: {e}")
             except json.JSONDecodeError as e:
-                print(f"Failed to decode JSON response from IoT tools API: {iot_response.text if 'iot_response' in locals() else 'No response text'}. Error: {e}")
+                debug_print(f"Failed to decode JSON response from IoT tools API: {iot_response.text if 'iot_response' in locals() else 'No response text'}. Error: {e}")
             except Exception as e:
-                print(f"An unexpected error occurred while fetching or processing IoT tools: {e}")
+                debug_print(f"An unexpected error occurred while fetching or processing IoT tools: {e}")
         else:
-            print("Skipping fetching IoT tools from API because api_key is not provided.")
+            debug_print("Skipping fetching IoT tools from API because api_key is not provided.")
 
 
         # init model parameters
@@ -242,12 +259,12 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             tool_call_names = ""
 
             current_llm_usage = None
-            print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
-            print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
+            debug_print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
+            debug_print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
 
             if isinstance(chunks, Generator):
                 for chunk in chunks:
-                    # print(f"ROUND {iteration_step} chunk: {chunk}")
+                    # debug_print(f"ROUND {iteration_step} chunk: {chunk}")
                     # 检查是否有工具调用
                     if self.check_tool_calls(chunk):
                         function_call_state = True
@@ -341,8 +358,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 current_thoughts.append(assistant_message)
 
             final_answer += response + "\n"
-            print(f"ROUND {iteration_step} final_answer: {final_answer}")
-            print(f"ROUND {iteration_step} tool_calls: {tool_calls}")
+            debug_print(f"ROUND {iteration_step} final_answer: {final_answer}")
+            debug_print(f"ROUND {iteration_step} tool_calls: {tool_calls}")
             # 调用工具
             tool_responses = []
             for tool_call_id, tool_call_name, tool_call_args in tool_calls:
@@ -394,12 +411,63 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
                     if iot_instance:
                         # 这里是IOT设备调用 http请求
-
-
+                        execute_control_url = f"http://{api_host}/open/iot/device/executeControl"
+                        
+                        # 构建请求参数
+                        tool_response_str = 'success'
+                        try:
+                            # 将 deviceId 和 apiKey 移到请求头中
+                            control_payload = json.dumps({
+                                "function": {
+                                    "name": tool_call_name,
+                                    "iot_name": iot_instance.iot_name,
+                                    "arguments": tool_call_args
+                                }
+                            })
+                            
+                            # 设置请求头，包含 X-API-Key 和 X-Device-ID
+                            control_headers = {
+                                'Content-Type': 'application/json',
+                                'X-API-Key': api_key,
+                                'X-Device-ID': device_id
+                            }
+                            
+                            debug_print(f"Executing IoT control: {execute_control_url}")
+                            debug_print(f"Control payload: {control_payload}")
+                            debug_print(f"Control headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
+                            
+                            # 发送请求
+                            control_response = requests.request(
+                                "POST", 
+                                execute_control_url, 
+                                headers=control_headers, 
+                                data=control_payload,
+                                timeout=10
+                            )
+                            
+                            # 解析响应
+                            control_result = control_response.json()
+                            debug_print(f"Control response: {control_result}")
+                            
+                            if control_result.get("code") == 1000:
+                                tool_response_str = "success"
+                            else:
+                                error_message = control_result.get("message", "Unknown error")
+                                tool_response_str = f"Failed to control device: {error_message}"
+                                
+                        except requests.exceptions.Timeout:
+                            tool_response_str = "Device control request timed out"
+                        except requests.exceptions.RequestException as e:
+                            tool_response_str = f"Device control request failed: {str(e)}"
+                        except json.JSONDecodeError:
+                            tool_response_str = "Invalid response from device control API"
+                        except Exception as e:
+                            tool_response_str = f"Error controlling device: {str(e)}"
+                        
                         # 添加工具响应到当前思考中
                         current_thoughts.append(
                         ToolPromptMessage(
-                            content=str('success'),  # 工具响应
+                            content=str(tool_response_str),  # 工具响应
                             tool_call_id=tool_call_id,
                             name=tool_call_name,
                             )
@@ -411,7 +479,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                                 # **tool_instance.runtime_parameters,
                                 **tool_call_args,
                             },
-                            "tool_response": 'success',
+                            "tool_response": tool_response_str,
                         }
                     else:
                         tool_response = {
@@ -476,8 +544,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         },
                         "tool_response": result,
                     }
-                    print(f"ROUND {iteration_step} runtime_parameters: {tool_instance.runtime_parameters}")
-                    print(f"ROUND {iteration_step} tool_call_args: {tool_call_args}")
+                    debug_print(f"ROUND {iteration_step} runtime_parameters: {tool_instance.runtime_parameters}")
+                    debug_print(f"ROUND {iteration_step} tool_call_args: {tool_call_args}")
 
                 yield self.finish_log_message(
                     log=tool_call_log,
@@ -509,7 +577,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     self.update_prompt_message_tool(
                         tool_instances[prompt_tool.name], prompt_tool
                     )
-            print(f"ROUND {iteration_step} updated prompt_messages_tools: {prompt_messages_tools}")
+            debug_print(f"ROUND {iteration_step} updated prompt_messages_tools: {prompt_messages_tools}")
             yield self.finish_log_message(
                 log=round_log,
                 data={
