@@ -182,7 +182,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         device_states_str = json.dumps(device_states_data["data"], ensure_ascii=False)
                         debug_print(f"Successfully fetched IoT device states. Data (as string): {device_states_str}")
                         # 将设备状态插入到提示词中，方便用户查询
-                        history_prompt_messages.insert(0, SystemPromptMessage(content=f"当前物联网设备状态如下：{device_states_str}"))
+                        history_prompt_messages.insert(0, SystemPromptMessage(content=f"当前物联网设备状态的数组JSON如下,请从其中查找设备的状态：{device_states_str}"))
                     elif "data" in device_states_data:
                         debug_print(f"IoT device states API success (code 1000), but 'data' field is not a list. Raw 'data': {device_states_data['data']}")
                     else:
