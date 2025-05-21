@@ -83,7 +83,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
         query = fc_params.query
         self.query = query
-        self.instruction = fc_params.instruction
+        self.instruction = fc_params.instruction # 这里的instruction是从参数中获取的 指令提示词
         history_prompt_messages = fc_params.model.history_prompt_messages
         history_prompt_messages.insert(0, self._system_prompt_message)
         history_prompt_messages.append(self._user_prompt_message)
@@ -165,9 +165,44 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 debug_print(f"Failed to decode JSON response from IoT tools API: {iot_response.text if 'iot_response' in locals() else 'No response text'}. Error: {e}")
             except Exception as e:
                 debug_print(f"An unexpected error occurred while fetching or processing IoT tools: {e}")
-        else:
-            debug_print("Skipping fetching IoT tools from API because api_key is not provided.")
 
+            # Fetch IoT device states from API
+            device_states_url = f"http://{api_host}/open/iot/device/deviceState"
+            try:
+                debug_print(f"Fetching IoT device states from: {device_states_url}")
+                # iot_headers is already defined and contains X-API-Key and X-Device-ID
+                debug_print(f"Request headers for device states: X-API-Key: {api_key}, X-Device-ID: {device_id}")
+                
+                device_states_response = requests.request("GET", device_states_url, headers=iot_headers, timeout=10)
+                device_states_response.raise_for_status()  # Raise an exception for HTTP errors
+                device_states_data = device_states_response.json()
+
+                if device_states_data.get("code") == 1000:
+                    if "data" in device_states_data and isinstance(device_states_data["data"], list):
+                        device_states_str = json.dumps(device_states_data["data"], ensure_ascii=False)
+                        debug_print(f"Successfully fetched IoT device states. Data (as string): {device_states_str}")
+                        # 将设备状态插入到提示词中，方便用户查询
+                        history_prompt_messages.insert(0, SystemPromptMessage(content=f"当前物联网设备状态如下：{device_states_str}"))
+                    elif "data" in device_states_data:
+                        debug_print(f"IoT device states API success (code 1000), but 'data' field is not a list. Raw 'data': {device_states_data['data']}")
+                    else:
+                        debug_print(f"IoT device states API success (code 1000), but 'data' field is missing. Response: {device_states_data}")
+                elif device_states_data.get("code") == 1001: 
+                    debug_print(f"Error fetching IoT device states: API error (code {device_states_data.get('code')}). Message: {device_states_data.get('message')}")
+                else:
+                    debug_print(f"Error fetching IoT device states: {device_states_data.get('message', 'Unknown API error')}. Response code: {device_states_data.get('code')}")
+            
+            except requests.exceptions.Timeout:
+                debug_print(f"API request timed out for IoT device states URL: {device_states_url}")
+            except requests.exceptions.RequestException as e:
+                debug_print(f"API request failed for IoT device states: {e}")
+            except json.JSONDecodeError as e:
+                response_text_for_error = device_states_response.text if 'device_states_response' in locals() and hasattr(device_states_response, 'text') else 'No response text available'
+                debug_print(f"Failed to decode JSON response from IoT device states API: {response_text_for_error}. Error: {e}")
+            except Exception as e:
+                debug_print(f"An unexpected error occurred while fetching or processing IoT device states: {e}")
+        else:
+            debug_print("Skipping fetching IoT tools and device states from API because api_key or device_id is not provided.")
 
         # init model parameters
 
