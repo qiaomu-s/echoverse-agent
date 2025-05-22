@@ -32,11 +32,13 @@ ReAct 在 LLM 推理情况和采取行动之间交替进行。LLM 分析当前�
 
 > 当前仅函数调用（Function Calling）方式支持 IoT 相关功能，ReAct 策略暂不支持。
 
+> 注意：文档中的 `http://www.label-studio.top` 仅为示例，实际接口地址应由系统动态配置。
+
 Agent 策略中支持通过 API 动态获取 IoT 设备工具和设备状态，相关接口如下：
 
 ### 1. 获取可控设备列表
 
-- **接口地址**：`http://www.label-studio.top/open/iot/device/controlDevices`
+- **接口地址**：`/open/iot/device/controlDevices`
 - **请求方式**：GET
 - **请求头**：
   - `X-API-Key`: 用户 API Key
@@ -147,7 +149,7 @@ Agent 策略中支持通过 API 动态获取 IoT 设备工具和设备状态，�
 
 ### 2. 获取设备状态
 
-- **接口地址**：`http://www.label-studio.top/open/iot/device/deviceState`
+- **接口地址**：`/open/iot/device/deviceState`
 - **请求方式**：GET
 - **请求头**：
   - `X-API-Key`: 用户 API Key
