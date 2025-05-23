@@ -165,7 +165,38 @@ Agent 策略中支持通过 API 动态获取 IoT 设备工具和设备状态，�
 
 - 其中 `name` 表示设备名称，`state` 为设备的状态信息（如音量、开关等）。
 
-### 说明
+### 3. 控制设备（IOT 设备调用）
 
-- 这些接口返回的数据会被 Agent 策略动态解析，用于生成可调用的 IoT 工具和获取设备当前状态。
-- 若未提供 `api_key` 或 `device_id`，则跳过 IoT 相关功能。
+- **接口地址**：`/open/iot/device/executeControl`
+- **请求方式**：POST
+- **请求头**：
+  - `X-API-Key`: 用户 API Key
+  - `X-Device-ID`: 设备 ID
+  - `Content-Type`: application/json
+- **请求体示例**：
+
+```json
+{
+  "function": {
+    "name": "TurnOn",
+    "iot_name": "Lamp",
+    "arguments": {
+      "iot_name": "Lamp"
+    }
+  }
+}
+```
+
+- **返回示例**：
+
+```json
+{
+  "code": 1000,
+  "message": "success"
+}
+```
+
+- 其中 `function` 字段包含要调用的操作名、iot_name 及参数。
+- 返回 code 为 1000 表示调用成功。
+
+---
