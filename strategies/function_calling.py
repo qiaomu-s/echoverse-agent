@@ -44,6 +44,7 @@ def debug_print(*args, **kwargs):
 
 class FunctionCallingParams(BaseModel):
     api_key: str
+    api_host: str = api_host  # 新增api_host参数，默认取全局变量
     device_id: str
     query: str
     instruction: str | None
@@ -76,6 +77,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         debug_print("========================================")
 
         fc_params = FunctionCallingParams(**parameters)
+        # 优先使用参数中的api_host，否则用全局变量
+        api_host_val = getattr(fc_params, 'api_host', None) or api_host
            
         # init prompt messages
         api_key = fc_params.api_key  # 这里的api_key是从参数中获取的
@@ -102,7 +105,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         # Dynamically fetch IoT tools from API only if api_key is present
         if api_key and device_id:
             # Fetch IoT tools from API
-            iot_tools_url = f"http://{api_host}/open/iot/device/controlDevices"
+            iot_tools_url = f"http://{api_host_val}/open/iot/device/controlDevices"
             iot_payload = {}
             
             # 设置请求头，包含 X-API-Key 和 X-Device-ID
@@ -167,7 +170,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 debug_print(f"An unexpected error occurred while fetching or processing IoT tools: {e}")
 
             # Fetch IoT device states from API
-            device_states_url = f"http://{api_host}/open/iot/device/deviceState"
+            device_states_url = f"http://{api_host_val}/open/iot/device/deviceState"
             try:
                 debug_print(f"Fetching IoT device states from: {device_states_url}")
                 # iot_headers is already defined and contains X-API-Key and X-Device-ID
@@ -446,7 +449,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
                     if iot_instance:
                         # 这里是IOT设备调用 http请求
-                        execute_control_url = f"http://{api_host}/open/iot/device/executeControl"
+                        execute_control_url = f"http://{api_host_val}/open/iot/device/executeControl"
                         
                         # 构建请求参数
                         tool_response_str = 'success'
