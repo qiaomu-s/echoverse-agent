@@ -150,6 +150,16 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             debug_print(f"Warning: Invalid inputSchema for tool {tool_name}, using empty dict")
                             tool_parameters = {}
 
+                        # 转换parameters中的title字段为description字段
+                        if tool_parameters and isinstance(tool_parameters, dict):
+                            properties = tool_parameters.get('properties', {})
+                            if isinstance(properties, dict):
+                                for prop_name, prop_config in properties.items():
+                                    if isinstance(prop_config, dict) and 'title' in prop_config:
+                                        # 将title字段转换为description字段
+                                        prop_config['description'] = prop_config.pop('title')
+                                        debug_print(f"Converted 'title' to 'description' for property {prop_name} in tool {tool_name}")
+
                         # 确保描述字段格式正确
                         tool_description = str(tool_description).strip()
                         if not tool_description:
