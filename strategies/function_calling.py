@@ -55,7 +55,7 @@ class FunctionCallingParams(BaseModel):
     maximum_iterations: int = 3
     
 
-class McpToolEntity(PromptMessageTool):
+class PromptMessageMcpTool(PromptMessageTool):
     tool_type: str = "mcp"  # 标识这是MCP工具
 
 class FunctionCallingAgentStrategy(AgentStrategy):
@@ -163,7 +163,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
                         debug_print(f"Creating MCP tool - Name: {tool_name}, Description: {tool_description}, Parameters: {tool_parameters}")
 
-                        mcp_tool = McpToolEntity(
+                        mcp_tool = PromptMessageMcpTool(
                             name=str(tool_name),
                             description=str(tool_description),
                             parameters=tool_parameters,
@@ -321,7 +321,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             current_llm_usage = None
             debug_print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
             debug_print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
-
+            
+           
             if isinstance(chunks, Generator):
                 for chunk in chunks:
                     # debug_print(f"ROUND {iteration_step} chunk: {chunk}")
@@ -458,49 +459,49 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 )
                 yield tool_call_log
                 if not tool_instance:
-                    # 判断是否在prompt_messages_tools中且有是IotToolEntity  这里是IOT设备调用
-                    iot_instance = next(
+                    # 判断是否在prompt_messages_tools中且是McpToolEntity  这里是MCP工具调用
+                    mcp_instance = next(
                         (
                             tool
                             for tool in prompt_messages_tools
                             if tool.name == tool_call_name
-                            and isinstance(tool, McpToolEntity)
+                            and isinstance(tool, PromptMessageMcpTool)
                         ),
                         None,
                     )
 
-                    if iot_instance:
-                        # 这里是IOT设备调用，使用MCP客户端执行MCP工具
+                    if mcp_instance:
+                        # 这里是MCP工具调用，使用MCP客户端
                         if not mcp_client:
                             mcp_client = create_mcp_client(api_host_val, api_key, device_id)
                         
                         tool_response_str = 'success'
                         if mcp_client:
-                            debug_print(f"Executing IoT control via MCP tool: {mcp_client.base_url}/open/iot/device/executeMcpTool")
+                            debug_print(f"Executing MCP tool: {mcp_client.base_url}/open/iot/device/executeMcpTool")
                             debug_print(f"MCP tool name: {tool_call_name}, arguments: {tool_call_args}")
-                            debug_print(f"Control headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
+                            debug_print(f"MCP headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
                             
                             # 调用MCP客户端执行MCP工具
-                            control_result = mcp_client.execute_mcp_tool(
+                            mcp_result = mcp_client.execute_mcp_tool(
                                 tool_name=tool_call_name,
                                 params=tool_call_args
                             )
                             
-                            debug_print(f"Control response: {control_result}")
+                            debug_print(f"MCP response: {mcp_result}")
                             
-                            if control_result.get("code") == 1000:
+                            if mcp_result.get("code") == 1000:
                                 # 如果API返回成功，使用返回的数据作为工具响应
-                                if "data" in control_result:
-                                    tool_response_str = json.dumps(control_result["data"], ensure_ascii=False)
+                                if "data" in mcp_result:
+                                    tool_response_str = json.dumps(mcp_result["data"], ensure_ascii=False)
                                 else:
                                     tool_response_str = "success"
-                            elif control_result.get("code") == -1:
-                                tool_response_str = control_result.get("message", "Unknown error")
+                            elif mcp_result.get("code") == -1:
+                                tool_response_str = mcp_result.get("message", "Unknown error")
                             else:
-                                error_message = control_result.get("message", "Unknown error")
-                                tool_response_str = f"Failed to control device: {error_message}"
+                                error_message = mcp_result.get("message", "Unknown error")
+                                tool_response_str = f"Failed to execute MCP tool: {error_message}"
                         else:
-                            tool_response_str = "Failed to create MCP client for device control"
+                            tool_response_str = "Failed to create MCP client for MCP tool execution"
                         
                         # 添加工具响应到当前思考中
                         current_thoughts.append(
@@ -520,76 +521,14 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             "tool_response": tool_response_str,
                         }
                     else:
-                        # 判断是否在prompt_messages_tools中且是McpToolEntity  这里是MCP工具调用
-                        mcp_instance = next(
-                            (
-                                tool
-                                for tool in prompt_messages_tools
-                                if tool.name == tool_call_name
-                                and isinstance(tool, McpToolEntity)
-                            ),
-                            None,
-                        )
-
-                        if mcp_instance:
-                            # 这里是MCP工具调用，使用MCP客户端
-                            if not mcp_client:
-                                mcp_client = create_mcp_client(api_host_val, api_key, device_id)
-                            
-                            tool_response_str = 'success'
-                            if mcp_client:
-                                debug_print(f"Executing MCP tool: {mcp_client.base_url}/open/iot/device/executeMcpTool")
-                                debug_print(f"MCP tool name: {tool_call_name}, arguments: {tool_call_args}")
-                                debug_print(f"MCP headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
-                                
-                                # 调用MCP客户端执行MCP工具
-                                mcp_result = mcp_client.execute_mcp_tool(
-                                    tool_name=tool_call_name,
-                                    params=tool_call_args
-                                )
-                                
-                                debug_print(f"MCP response: {mcp_result}")
-                                
-                                if mcp_result.get("code") == 1000:
-                                    # 如果API返回成功，使用返回的数据作为工具响应
-                                    if "data" in mcp_result:
-                                        tool_response_str = json.dumps(mcp_result["data"], ensure_ascii=False)
-                                    else:
-                                        tool_response_str = "success"
-                                elif mcp_result.get("code") == -1:
-                                    tool_response_str = mcp_result.get("message", "Unknown error")
-                                else:
-                                    error_message = mcp_result.get("message", "Unknown error")
-                                    tool_response_str = f"Failed to execute MCP tool: {error_message}"
-                            else:
-                                tool_response_str = "Failed to create MCP client for MCP tool execution"
-                            
-                            # 添加工具响应到当前思考中
-                            current_thoughts.append(
-                            ToolPromptMessage(
-                                content=str(tool_response_str),  # 工具响应
-                                tool_call_id=tool_call_id,
-                                name=tool_call_name,
-                                )
-                            )
-                            tool_response = {
-                                "tool_call_id": tool_call_id,
-                                "tool_call_name": tool_call_name,
-                                "tool_call_input": {
-                                    # **tool_instance.runtime_parameters,
-                                    **tool_call_args,
-                                },
-                                "tool_response": tool_response_str,
-                            }
-                        else:
-                            tool_response = {
-                                "tool_call_id": tool_call_id,
-                                "tool_call_name": tool_call_name,
-                                "tool_response": f"there is not a tool named {tool_call_name}",
-                                "meta": ToolInvokeMeta.error_instance(
-                                    f"there is not a tool named {tool_call_name}"
-                                ).to_dict(),
-                            }
+                        tool_response = {
+                            "tool_call_id": tool_call_id,
+                            "tool_call_name": tool_call_name,
+                            "tool_response": f"there is not a tool named {tool_call_name}",
+                            "meta": ToolInvokeMeta.error_instance(
+                                f"there is not a tool named {tool_call_name}"
+                            ).to_dict(),
+                        }
                         
                 else:
                     # 执行工具
