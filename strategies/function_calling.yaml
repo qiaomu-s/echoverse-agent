@@ -19,9 +19,13 @@ parameters:
       en_US: API Host
       zh_Hans: API 主机
       pt_BR: API Host
+    help:
+      en_US: The API Host for the model.
+      zh_Hans: 输入您的 API 主机 例如：https://api.qiaomu.com
+      pt_BR: The API Host for the model.
     human_description:
       en_US: API Host for the model.
-      zh_Hans: 模型的 API 主机。
+      zh_Hans: 输入您的 API 主机
       pt_BR: API Host for the model.
     placeholder:
       en_US: Enter your API Host

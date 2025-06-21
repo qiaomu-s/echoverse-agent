@@ -1,9 +1,11 @@
 import json
 import time
+import traceback
 from collections.abc import Generator
 from copy import deepcopy
 from typing import Any, Optional, cast
-import requests
+
+from utils.mcp_client import create_mcp_client
 
 from dify_plugin.entities.agent import AgentInvokeMessage
 from dify_plugin.entities.model import ModelFeature
@@ -52,8 +54,9 @@ class FunctionCallingParams(BaseModel):
     tools: list[ToolEntity] | None 
     maximum_iterations: int = 3
     
-class IotToolEntity(PromptMessageTool):
-    iot_name: str
+
+class McpToolEntity(PromptMessageTool):
+    tool_type: str = "mcp"  # 标识这是MCP工具
 
 class FunctionCallingAgentStrategy(AgentStrategy):
     def __init__(self, session):
@@ -102,110 +105,115 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         # 这里的工具实例是从工具列表中获取的 PromptMessageTool
         prompt_messages_tools = self._init_prompt_tools(tools)
 
-        # Dynamically fetch IoT tools from API only if api_key is present
-        if api_key and device_id:
-            # Fetch IoT tools from API
-            iot_tools_url = f"http://{api_host_val}/open/iot/device/controlDevices"
-            iot_payload = {}
+        # Dynamically fetch MCP tools from API only if api_key is present
+        mcp_client = create_mcp_client(api_host_val, api_key, device_id)
+        if mcp_client:
+            # Fetch MCP tools from API
+            debug_print(f"Fetching MCP tools from MCP API: {mcp_client.base_url}")
+            debug_print(f"Request headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
             
-            # 设置请求头，包含 X-API-Key 和 X-Device-ID
-            iot_headers = {
-                'X-API-Key': api_key,
-                'X-Device-ID': device_id
-            }
+            mcp_tools_data = mcp_client.fetch_mcp_tools()
 
-            try:
-                debug_print(f"Fetching IoT tools from: {iot_tools_url}")
-                debug_print(f"Request headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
-                iot_response = requests.request("GET", iot_tools_url, headers=iot_headers, data=iot_payload, timeout=10)
-                iot_response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
-                iot_data = iot_response.json()
-
-                if iot_data.get("code") == 1000 and "data" in iot_data:
-                    debug_print(f"Successfully fetched IoT tools data: {iot_data['data']}")
-                    for tool_data in iot_data["data"]:
-                        try:
-                            # 处理标准格式工具数据
-                            if tool_data.get("type") == "function" and tool_data.get("function"):
-                                function_details = tool_data.get("function", {})
-                                
-                                tool_name = function_details.get("name")
-                                # 从工具数据获取 iot_name，如果没有则使用空字符串
-                                iot_name_val = tool_data.get("iot_name")
-                                tool_description = function_details.get("description")
-                                tool_parameters = function_details.get("parameters")
-
-                                if not all([tool_name, tool_description, tool_parameters is not None]):
-                                    debug_print(f"Warning: Skipping tool due to missing essential fields. Raw tool_data: {tool_data}")
-                                    continue
-                                
-                                # Ensure parameters is a dict, default to empty if not, or if it's not the expected structure
-                                if not isinstance(tool_parameters, dict):
-                                    debug_print(f"Warning: Parameters for tool '{tool_name}' is not a dict, using empty. Received: {tool_parameters}")
-                                    tool_parameters = {}
-
-                                iot_tool = IotToolEntity(
-                                    name=str(tool_name),
-                                    iot_name=str(iot_name_val) if iot_name_val else "",
-                                    description=str(tool_description),
-                                    parameters=tool_parameters,
-                                )
-                                prompt_messages_tools.append(iot_tool)
-                                debug_print(f"Successfully added IoT tool: {tool_name} (iot_name: {iot_name_val if iot_name_val else 'N/A'})")
-                            else:
-                                debug_print(f"Warning: Unknown tool data format. Raw tool_data: {tool_data}")
-                        except Exception as e:
-                            debug_print(f"Error processing individual tool data: {tool_data}. Error: {e}")
-                elif iot_data.get("code") == 1001:
-                    debug_print(f"Error fetching IoT tools: API key invalid or other API error. Message: {iot_data.get('message')}")
-                else:
-                    debug_print(f"Error fetching IoT tools: {iot_data.get('message', 'Unknown API error')}. Response code: {iot_data.get('code')}")
-            except requests.exceptions.Timeout:
-                debug_print(f"API request timed out for IoT tools URL: {iot_tools_url}")
-            except requests.exceptions.RequestException as e:
-                debug_print(f"API request failed for IoT tools: {e}")
-            except json.JSONDecodeError as e:
-                debug_print(f"Failed to decode JSON response from IoT tools API: {iot_response.text if 'iot_response' in locals() else 'No response text'}. Error: {e}")
-            except Exception as e:
-                debug_print(f"An unexpected error occurred while fetching or processing IoT tools: {e}")
-
-            # Fetch IoT device states from API
-            device_states_url = f"http://{api_host_val}/open/iot/device/deviceState"
-            try:
-                debug_print(f"Fetching IoT device states from: {device_states_url}")
-                # iot_headers is already defined and contains X-API-Key and X-Device-ID
-                debug_print(f"Request headers for device states: X-API-Key: {api_key}, X-Device-ID: {device_id}")
+            if mcp_tools_data.get("code") == 1000 and "data" in mcp_tools_data:
+                data = mcp_tools_data["data"]
+                tools_list = data.get("tools", []) if isinstance(data, dict) else []
+                debug_print(f"Successfully fetched {data.get('count', len(tools_list))} MCP tools from API")
                 
-                device_states_response = requests.request("GET", device_states_url, headers=iot_headers, timeout=10)
-                device_states_response.raise_for_status()  # Raise an exception for HTTP errors
-                device_states_data = device_states_response.json()
+                # 用于去重的工具名称集合
+                existing_tool_names = {tool.name for tool in prompt_messages_tools}
+                
+                for tool_data in tools_list:
+                    try:
+                        # 处理MCP工具格式
+                        tool_name = tool_data.get("name")
+                        tool_description = tool_data.get("description")
+                        input_schema = tool_data.get("inputSchema", {})
 
-                if device_states_data.get("code") == 1000:
-                    if "data" in device_states_data and isinstance(device_states_data["data"], list):
-                        device_states_str = json.dumps(device_states_data["data"], ensure_ascii=False)
-                        debug_print(f"Successfully fetched IoT device states. Data (as string): {device_states_str}")
-                        # 将设备状态插入到提示词中，方便用户查询
-                        history_prompt_messages.insert(0, SystemPromptMessage(content=f"当前物联网设备状态的数组JSON如下,请从其中查找设备的状态并且以自然语言描述：{device_states_str}"))
-                    elif "data" in device_states_data:
-                        debug_print(f"IoT device states API success (code 1000), but 'data' field is not a list. Raw 'data': {device_states_data['data']}")
-                    else:
-                        debug_print(f"IoT device states API success (code 1000), but 'data' field is missing. Response: {device_states_data}")
-                elif device_states_data.get("code") == 1001: 
-                    debug_print(f"Error fetching IoT device states: API error (code {device_states_data.get('code')}). Message: {device_states_data.get('message')}")
-                else:
-                    debug_print(f"Error fetching IoT device states: {device_states_data.get('message', 'Unknown API error')}. Response code: {device_states_data.get('code')}")
+                        # 更严格的字段验证
+                        if not tool_name or not isinstance(tool_name, str):
+                            debug_print(f"Warning: Skipping MCP tool due to invalid name. Raw tool_data: {tool_data}")
+                            continue
+                        
+                        if not tool_description or not isinstance(tool_description, str):
+                            debug_print(f"Warning: Skipping MCP tool due to invalid description. Raw tool_data: {tool_data}")
+                            continue
+                        
+                        # 检查工具是否已存在，避免重复添加
+                        if tool_name in existing_tool_names:
+                            debug_print(f"Warning: Skipping duplicate MCP tool: {tool_name}")
+                            continue
+                        
+                        # 将inputSchema转换为parameters格式，确保是dict类型
+                        if isinstance(input_schema, dict):
+                            tool_parameters = input_schema
+                        else:
+                            debug_print(f"Warning: Invalid inputSchema for tool {tool_name}, using empty dict")
+                            tool_parameters = {}
+
+                        # 确保描述字段格式正确
+                        tool_description = str(tool_description).strip()
+                        if not tool_description:
+                            tool_description = f"MCP tool: {tool_name}"
+                            debug_print(f"Warning: Empty description for tool {tool_name}, using default")
+
+                        # 验证参数结构
+                        if tool_parameters and not isinstance(tool_parameters, dict):
+                            debug_print(f"Warning: Invalid parameters structure for tool {tool_name}, resetting to empty")
+                            tool_parameters = {}
+
+                        debug_print(f"Creating MCP tool - Name: {tool_name}, Description: {tool_description}, Parameters: {tool_parameters}")
+
+                        mcp_tool = McpToolEntity(
+                            name=str(tool_name),
+                            description=str(tool_description),
+                            parameters=tool_parameters,
+                        )
+                        
+                        # 验证创建的工具对象
+                        if not hasattr(mcp_tool, 'name') or not hasattr(mcp_tool, 'description'):
+                            debug_print(f"Error: Created tool object is missing required attributes for {tool_name}")
+                            continue
+                        
+                        prompt_messages_tools.append(mcp_tool)
+                        existing_tool_names.add(tool_name)
+                        debug_print(f"Successfully added MCP tool: {tool_name}")
+                        
+                    except Exception as e:
+                        debug_print(f"Error processing individual MCP tool data: {tool_data}. Error: {e}")
+                        import traceback
+                        debug_print(f"Full traceback: {traceback.format_exc()}")
+            elif mcp_tools_data.get("code") == 1001:
+                debug_print(f"Error fetching MCP tools: API key invalid or other API error. Message: {mcp_tools_data.get('message')}")
+            elif mcp_tools_data.get("code") == -1:
+                debug_print(f"Error fetching MCP tools: {mcp_tools_data.get('message')} (Type: {mcp_tools_data.get('error_type')})")
+            else:
+                debug_print(f"Error fetching MCP tools: {mcp_tools_data.get('message', 'Unknown API error')}. Response code: {mcp_tools_data.get('code')}")
+
+            # Fetch IoT device states from API (commented out as per original code)
+            # debug_print(f"Fetching IoT device states from: {mcp_client.base_url}")
+            # debug_print(f"Request headers for device states: X-API-Key: {api_key}, X-Device-ID: {device_id}")
             
-            except requests.exceptions.Timeout:
-                debug_print(f"API request timed out for IoT device states URL: {device_states_url}")
-            except requests.exceptions.RequestException as e:
-                debug_print(f"API request failed for IoT device states: {e}")
-            except json.JSONDecodeError as e:
-                response_text_for_error = device_states_response.text if 'device_states_response' in locals() and hasattr(device_states_response, 'text') else 'No response text available'
-                debug_print(f"Failed to decode JSON response from IoT device states API: {response_text_for_error}. Error: {e}")
-            except Exception as e:
-                debug_print(f"An unexpected error occurred while fetching or processing IoT device states: {e}")
+            # device_states_data = mcp_client.fetch_device_states()
+
+            # if device_states_data.get("code") == 1000:
+            #     if "data" in device_states_data and isinstance(device_states_data["data"], list):
+            #         device_states_str = json.dumps(device_states_data["data"], ensure_ascii=False)
+            #         debug_print(f"Successfully fetched IoT device states. Data (as string): {device_states_str}")
+            #         # 将设备状态插入到提示词中，方便用户查询
+            #         history_prompt_messages.insert(0, SystemPromptMessage(content=f"当前物联网设备状态的数组JSON如下,请从其中查找设备的状态并且以自然语言描述：{device_states_str}"))
+            #     elif "data" in device_states_data:
+            #         debug_print(f"IoT device states API success (code 1000), but 'data' field is not a list. Raw 'data': {device_states_data['data']}")
+            #     else:
+            #         debug_print(f"IoT device states API success (code 1000), but 'data' field is missing. Response: {device_states_data}")
+            # elif device_states_data.get("code") == 1001: 
+            #     debug_print(f"Error fetching IoT device states: API error (code {device_states_data.get('code')}). Message: {device_states_data.get('message')}")
+            # elif device_states_data.get("code") == -1:
+            #     debug_print(f"Error fetching IoT device states: {device_states_data.get('message')} (Type: {device_states_data.get('error_type')})")
+            # else:
+            #     debug_print(f"Error fetching IoT device states: {device_states_data.get('message', 'Unknown API error')}. Response code: {device_states_data.get('code')}")
+            
         else:
-            debug_print("Skipping fetching IoT tools and device states from API because api_key or device_id is not provided.")
+            debug_print("Skipping fetching MCP tools from API because api_key or device_id is not provided.")
 
         # init model parameters
 
@@ -266,6 +274,20 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
             # 执行模型
             model_started_at = time.perf_counter()
+            
+            # 添加工具验证调试信息
+            debug_print(f"ROUND {iteration_step} - Validating {len(prompt_messages_tools)} tools before sending to model:")
+            for i, tool in enumerate(prompt_messages_tools):
+                debug_print(f"  Tool {i+1}: name='{tool.name}', description='{tool.description}', parameters={tool.parameters}")
+                
+                # 验证工具的必需属性
+                if not hasattr(tool, 'name') or not tool.name:
+                    debug_print(f"  ERROR: Tool {i+1} missing or empty name!")
+                if not hasattr(tool, 'description') or not tool.description:
+                    debug_print(f"  ERROR: Tool {i+1} missing or empty description!")
+                if not hasattr(tool, 'parameters'):
+                    debug_print(f"  ERROR: Tool {i+1} missing parameters attribute!")
+            
             model_log = self.create_log_message(
                 label=f"{model.model} Thought",
                 data={},
@@ -442,65 +464,43 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             tool
                             for tool in prompt_messages_tools
                             if tool.name == tool_call_name
-                            and isinstance(tool, IotToolEntity)
+                            and isinstance(tool, McpToolEntity)
                         ),
                         None,
                     )
 
                     if iot_instance:
-                        # 这里是IOT设备调用 http请求
-                        execute_control_url = f"http://{api_host_val}/open/iot/device/executeControl"
+                        # 这里是IOT设备调用，使用MCP客户端执行MCP工具
+                        if not mcp_client:
+                            mcp_client = create_mcp_client(api_host_val, api_key, device_id)
                         
-                        # 构建请求参数
                         tool_response_str = 'success'
-                        try:
-                            # 将 deviceId 和 apiKey 移到请求头中
-                            control_payload = json.dumps({
-                                "function": {
-                                    "name": tool_call_name,
-                                    "iot_name": iot_instance.iot_name,
-                                    "arguments": tool_call_args
-                                }
-                            })
-                            
-                            # 设置请求头，包含 X-API-Key 和 X-Device-ID
-                            control_headers = {
-                                'Content-Type': 'application/json',
-                                'X-API-Key': api_key,
-                                'X-Device-ID': device_id
-                            }
-                            
-                            debug_print(f"Executing IoT control: {execute_control_url}")
-                            debug_print(f"Control payload: {control_payload}")
+                        if mcp_client:
+                            debug_print(f"Executing IoT control via MCP tool: {mcp_client.base_url}/open/iot/device/executeMcpTool")
+                            debug_print(f"MCP tool name: {tool_call_name}, arguments: {tool_call_args}")
                             debug_print(f"Control headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
                             
-                            # 发送请求
-                            control_response = requests.request(
-                                "POST", 
-                                execute_control_url, 
-                                headers=control_headers, 
-                                data=control_payload,
-                                timeout=10
+                            # 调用MCP客户端执行MCP工具
+                            control_result = mcp_client.execute_mcp_tool(
+                                tool_name=tool_call_name,
+                                params=tool_call_args
                             )
                             
-                            # 解析响应
-                            control_result = control_response.json()
                             debug_print(f"Control response: {control_result}")
                             
                             if control_result.get("code") == 1000:
-                                tool_response_str = "success"
+                                # 如果API返回成功，使用返回的数据作为工具响应
+                                if "data" in control_result:
+                                    tool_response_str = json.dumps(control_result["data"], ensure_ascii=False)
+                                else:
+                                    tool_response_str = "success"
+                            elif control_result.get("code") == -1:
+                                tool_response_str = control_result.get("message", "Unknown error")
                             else:
                                 error_message = control_result.get("message", "Unknown error")
                                 tool_response_str = f"Failed to control device: {error_message}"
-                                
-                        except requests.exceptions.Timeout:
-                            tool_response_str = "Device control request timed out"
-                        except requests.exceptions.RequestException as e:
-                            tool_response_str = f"Device control request failed: {str(e)}"
-                        except json.JSONDecodeError:
-                            tool_response_str = "Invalid response from device control API"
-                        except Exception as e:
-                            tool_response_str = f"Error controlling device: {str(e)}"
+                        else:
+                            tool_response_str = "Failed to create MCP client for device control"
                         
                         # 添加工具响应到当前思考中
                         current_thoughts.append(
@@ -520,14 +520,76 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             "tool_response": tool_response_str,
                         }
                     else:
-                        tool_response = {
-                            "tool_call_id": tool_call_id,
-                            "tool_call_name": tool_call_name,
-                            "tool_response": f"there is not a tool named {tool_call_name}",
-                            "meta": ToolInvokeMeta.error_instance(
-                                f"there is not a tool named {tool_call_name}"
-                            ).to_dict(),
-                        }
+                        # 判断是否在prompt_messages_tools中且是McpToolEntity  这里是MCP工具调用
+                        mcp_instance = next(
+                            (
+                                tool
+                                for tool in prompt_messages_tools
+                                if tool.name == tool_call_name
+                                and isinstance(tool, McpToolEntity)
+                            ),
+                            None,
+                        )
+
+                        if mcp_instance:
+                            # 这里是MCP工具调用，使用MCP客户端
+                            if not mcp_client:
+                                mcp_client = create_mcp_client(api_host_val, api_key, device_id)
+                            
+                            tool_response_str = 'success'
+                            if mcp_client:
+                                debug_print(f"Executing MCP tool: {mcp_client.base_url}/open/iot/device/executeMcpTool")
+                                debug_print(f"MCP tool name: {tool_call_name}, arguments: {tool_call_args}")
+                                debug_print(f"MCP headers: X-API-Key: {api_key}, X-Device-ID: {device_id}")
+                                
+                                # 调用MCP客户端执行MCP工具
+                                mcp_result = mcp_client.execute_mcp_tool(
+                                    tool_name=tool_call_name,
+                                    params=tool_call_args
+                                )
+                                
+                                debug_print(f"MCP response: {mcp_result}")
+                                
+                                if mcp_result.get("code") == 1000:
+                                    # 如果API返回成功，使用返回的数据作为工具响应
+                                    if "data" in mcp_result:
+                                        tool_response_str = json.dumps(mcp_result["data"], ensure_ascii=False)
+                                    else:
+                                        tool_response_str = "success"
+                                elif mcp_result.get("code") == -1:
+                                    tool_response_str = mcp_result.get("message", "Unknown error")
+                                else:
+                                    error_message = mcp_result.get("message", "Unknown error")
+                                    tool_response_str = f"Failed to execute MCP tool: {error_message}"
+                            else:
+                                tool_response_str = "Failed to create MCP client for MCP tool execution"
+                            
+                            # 添加工具响应到当前思考中
+                            current_thoughts.append(
+                            ToolPromptMessage(
+                                content=str(tool_response_str),  # 工具响应
+                                tool_call_id=tool_call_id,
+                                name=tool_call_name,
+                                )
+                            )
+                            tool_response = {
+                                "tool_call_id": tool_call_id,
+                                "tool_call_name": tool_call_name,
+                                "tool_call_input": {
+                                    # **tool_instance.runtime_parameters,
+                                    **tool_call_args,
+                                },
+                                "tool_response": tool_response_str,
+                            }
+                        else:
+                            tool_response = {
+                                "tool_call_id": tool_call_id,
+                                "tool_call_name": tool_call_name,
+                                "tool_response": f"there is not a tool named {tool_call_name}",
+                                "meta": ToolInvokeMeta.error_instance(
+                                    f"there is not a tool named {tool_call_name}"
+                                ).to_dict(),
+                            }
                         
                 else:
                     # 执行工具
