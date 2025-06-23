@@ -3,7 +3,7 @@ name: Auto Create PR on Main Push
 
 on:
   push:
-    branches: [ main ]  # Trigger on push to main
+    branches: [main] # Trigger on push to main
 
 jobs:
   create_pr: # Renamed job for clarity
@@ -68,6 +68,51 @@ jobs:
           pwd
           echo "\\nDirectory structure:"
           tree || ls -R
+
+      - name: Create tag and GitHub Release
+        id: create_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure git for tagging
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Create tag with version from manifest
+          TAG_NAME="v${{ steps.get_basic_info.outputs.version }}"
+          PACKAGE_NAME="${{ steps.package.outputs.package_name }}"
+
+          echo "Creating tag: $TAG_NAME"
+          echo "Package file: $PACKAGE_NAME"
+
+          # Check if tag already exists
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists, skipping tag and release creation"
+          else
+            # Create and push tag
+            git tag -a "$TAG_NAME" -m "Release ${{ steps.get_basic_info.outputs.plugin_name }} version ${{ steps.get_basic_info.outputs.version }}"
+            git push origin "$TAG_NAME"
+            echo "Tag $TAG_NAME created and pushed"
+            
+            # Create GitHub Release with the plugin package
+            gh release create "$TAG_NAME" \
+              --title "Release ${{ steps.get_basic_info.outputs.plugin_name }} ${{ steps.get_basic_info.outputs.version }}" \
+              --notes "自动发布 ${{ steps.get_basic_info.outputs.plugin_name }} 插件版本 ${{ steps.get_basic_info.outputs.version }}
+
+            ## 更新内容
+            - 插件包文件: \`$PACKAGE_NAME\`
+            - 版本: ${{ steps.get_basic_info.outputs.version }}
+            
+            ## 安装方法
+            1. 下载 \`$PACKAGE_NAME\` 文件
+            2. 在Dify中上传并安装插件包
+            " \
+              "$PACKAGE_NAME"
+            
+            echo "GitHub Release created with plugin package"
+            echo "release_created=true" >> $GITHUB_OUTPUT
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Checkout target repo
         uses: actions/checkout@v3
