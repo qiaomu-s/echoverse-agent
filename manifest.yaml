@@ -1,7 +1,7 @@
 version: 0.0.4
 type: plugin
 author: qiaomu-s
-name: EchoVerseAgent
+name: "agent"
 label:
   en_US: "EchoVerse Agent Strategies"
   zh_Hans: "EchoVerse Agent 策略"
