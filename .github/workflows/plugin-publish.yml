@@ -72,7 +72,7 @@ jobs:
       - name: Create tag and GitHub Release
         id: create_release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PLUGIN_ACTION }}
         run: |
           # Configure git for tagging
           git config user.name "GitHub Actions"
@@ -89,7 +89,8 @@ jobs:
           if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
             echo "Tag $TAG_NAME already exists, skipping tag and release creation"
           else
-            # Create and push tag
+            # Create and push tag using the configured token
+            git remote set-url origin "https://x-access-token:${{ secrets.PLUGIN_ACTION }}@github.com/${{ github.repository }}.git"
             git tag -a "$TAG_NAME" -m "Release ${{ steps.get_basic_info.outputs.plugin_name }} version ${{ steps.get_basic_info.outputs.version }}"
             git push origin "$TAG_NAME"
             echo "Tag $TAG_NAME created and pushed"
