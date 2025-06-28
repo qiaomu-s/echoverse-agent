@@ -197,31 +197,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             elif mcp_tools_data.get("code") == -1:
                 debug_print(f"Error fetching MCP tools: {mcp_tools_data.get('message')} (Type: {mcp_tools_data.get('error_type')})")
             else:
-                debug_print(f"Error fetching MCP tools: {mcp_tools_data.get('message', 'Unknown API error')}. Response code: {mcp_tools_data.get('code')}")
-
-            # Fetch IoT device states from API (commented out as per original code)
-            # debug_print(f"Fetching IoT device states from: {mcp_client.base_url}")
-            # debug_print(f"Request headers for device states: X-API-Key: {api_key}, X-Device-ID: {device_id}")
-            
-            # device_states_data = mcp_client.fetch_device_states()
-
-            # if device_states_data.get("code") == 1000:
-            #     if "data" in device_states_data and isinstance(device_states_data["data"], list):
-            #         device_states_str = json.dumps(device_states_data["data"], ensure_ascii=False)
-            #         debug_print(f"Successfully fetched IoT device states. Data (as string): {device_states_str}")
-            #         # 将设备状态插入到提示词中，方便用户查询
-            #         history_prompt_messages.insert(0, SystemPromptMessage(content=f"当前物联网设备状态的数组JSON如下,请从其中查找设备的状态并且以自然语言描述：{device_states_str}"))
-            #     elif "data" in device_states_data:
-            #         debug_print(f"IoT device states API success (code 1000), but 'data' field is not a list. Raw 'data': {device_states_data['data']}")
-            #     else:
-            #         debug_print(f"IoT device states API success (code 1000), but 'data' field is missing. Response: {device_states_data}")
-            # elif device_states_data.get("code") == 1001: 
-            #     debug_print(f"Error fetching IoT device states: API error (code {device_states_data.get('code')}). Message: {device_states_data.get('message')}")
-            # elif device_states_data.get("code") == -1:
-            #     debug_print(f"Error fetching IoT device states: {device_states_data.get('message')} (Type: {device_states_data.get('error_type')})")
-            # else:
-            #     debug_print(f"Error fetching IoT device states: {device_states_data.get('message', 'Unknown API error')}. Response code: {device_states_data.get('code')}")
-            
+                debug_print(f"Error fetching MCP tools: {mcp_tools_data.get('message', 'Unknown API error')}. Response code: {mcp_tools_data.get('code')}") 
         else:
             debug_print("Skipping fetching MCP tools from API because api_key or device_id is not provided.")
 
