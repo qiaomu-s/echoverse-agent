@@ -72,6 +72,93 @@ class FunctionCallingAgentStrategy(AgentStrategy):
     def _system_prompt_message(self) -> SystemPromptMessage:
         return SystemPromptMessage(content=self.instruction)
 
+    def _generate_property_description(self, prop_name: str, prop_config: dict) -> str:
+        """
+        根据属性名称和配置生成合理的描述
+        """
+        # 获取属性类型
+        prop_type = prop_config.get('type', 'string')
+        
+        # 根据属性名称生成描述的映射表
+        name_mappings = {
+            'volume': 'The volume level',
+            'brightness': 'The brightness level', 
+            'theme': 'The theme setting',
+            'question': 'The question to ask',
+            'python_expression': 'Python expression to evaluate',
+            'expression': 'Expression to evaluate',
+            'query': 'Query string',
+            'text': 'Text content',
+            'message': 'Message content',
+            'value': 'Value to set',
+            'name': 'Name of the item',
+            'id': 'Identifier',
+            'url': 'URL address',
+            'path': 'File path',
+            'filename': 'File name',
+            'size': 'Size value',
+            'count': 'Count value',
+            'duration': 'Duration in seconds',
+            'timeout': 'Timeout in seconds',
+            'delay': 'Delay in seconds',
+            'format': 'Format type',
+            'mode': 'Operation mode',
+            'status': 'Status value',
+            'level': 'Level value',
+            'rate': 'Rate value',
+            'speed': 'Speed value',
+            'temperature': 'Temperature value',
+            'password': 'Password',
+            'token': 'Authentication token',
+            'key': 'Key value',
+            'code': 'Code value',
+        }
+        
+        # 尝试从映射表中获取描述
+        lower_name = prop_name.lower()
+        for key, desc in name_mappings.items():
+            if key in lower_name:
+                # 根据类型添加更多信息
+                if prop_type == 'integer':
+                    if 'minimum' in prop_config and 'maximum' in prop_config:
+                        return f"{desc} (integer, range: {prop_config['minimum']}-{prop_config['maximum']})"
+                    elif 'minimum' in prop_config:
+                        return f"{desc} (integer, minimum: {prop_config['minimum']})"
+                    elif 'maximum' in prop_config:
+                        return f"{desc} (integer, maximum: {prop_config['maximum']})"
+                    else:
+                        return f"{desc} (integer)"
+                elif prop_type == 'number':
+                    if 'minimum' in prop_config and 'maximum' in prop_config:
+                        return f"{desc} (number, range: {prop_config['minimum']}-{prop_config['maximum']})"
+                    else:
+                        return f"{desc} (number)"
+                elif prop_type == 'boolean':
+                    return f"{desc} (true or false)"
+                elif prop_type == 'array':
+                    return f"{desc} (array of values)"
+                else:
+                    return f"{desc} (string)"
+        
+        # 如果没有找到映射，生成通用描述
+        if prop_type == 'integer':
+            if 'minimum' in prop_config and 'maximum' in prop_config:
+                return f"Integer value for {prop_name} (range: {prop_config['minimum']}-{prop_config['maximum']})"
+            elif 'minimum' in prop_config:
+                return f"Integer value for {prop_name} (minimum: {prop_config['minimum']})"
+            elif 'maximum' in prop_config:
+                return f"Integer value for {prop_name} (maximum: {prop_config['maximum']})"
+            else:
+                return f"Integer value for {prop_name}"
+        elif prop_type == 'number':
+            return f"Numeric value for {prop_name}"
+        elif prop_type == 'boolean':
+            return f"Boolean value for {prop_name} (true or false)"
+        elif prop_type == 'array':
+            return f"Array of values for {prop_name}"
+        else:
+            return f"String value for {prop_name}"
+
     def _invoke(self, parameters: dict[str, Any]) -> Generator[AgentInvokeMessage]:
         """
         Run FunctionCall agent application
@@ -150,15 +237,23 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             debug_print(f"Warning: Invalid inputSchema for tool {tool_name}, using empty dict")
                             tool_parameters = {}
 
-                        # 转换parameters中的title字段为description字段
+                        # 转换parameters中的title字段为description字段，并确保每个属性都有description
                         if tool_parameters and isinstance(tool_parameters, dict):
                             properties = tool_parameters.get('properties', {})
                             if isinstance(properties, dict):
                                 for prop_name, prop_config in properties.items():
-                                    if isinstance(prop_config, dict) and 'title' in prop_config:
+                                    if isinstance(prop_config, dict):
                                         # 将title字段转换为description字段
-                                        prop_config['description'] = prop_config.pop('title')
-                                        debug_print(f"Converted 'title' to 'description' for property {prop_name} in tool {tool_name}")
+                                        if 'title' in prop_config:
+                                            prop_config['description'] = prop_config.pop('title')
+                                            debug_print(f"Converted 'title' to 'description' for property {prop_name} in tool {tool_name}")
+                                        
+                                        # 确保每个属性都有description字段，如果没有则根据属性名生成
+                                        if 'description' not in prop_config or not prop_config['description']:
+                                            # 根据属性名生成描述
+                                            generated_desc = self._generate_property_description(prop_name, prop_config)
+                                            prop_config['description'] = generated_desc
+                                            debug_print(f"Generated description for property {prop_name} in tool {tool_name}: {generated_desc}")
 
                         # 确保描述字段格式正确
                         tool_description = str(tool_description).strip()
@@ -170,8 +265,23 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         if tool_parameters and not isinstance(tool_parameters, dict):
                             debug_print(f"Warning: Invalid parameters structure for tool {tool_name}, resetting to empty")
                             tool_parameters = {}
+                        
+                        # 确保parameters有required字段，即使是空数组
+                        if not tool_parameters:
+                            tool_parameters = {'type': 'object', 'properties': {}, 'required': []}
+                        else:
+                            # 确保有required字段
+                            if 'required' not in tool_parameters:
+                                tool_parameters['required'] = []
+                                debug_print(f"Added empty required array for tool {tool_name}")
+                            
+                            # 确保有type和properties字段
+                            if 'type' not in tool_parameters:
+                                tool_parameters['type'] = 'object'
+                            if 'properties' not in tool_parameters:
+                                tool_parameters['properties'] = {}
 
-                        debug_print(f"Creating MCP tool - Name: {tool_name}, Description: {tool_description}, Parameters: {tool_parameters}")
+                        # debug_print(f"Creating MCP tool - Name: {tool_name}, Description: {tool_description}, Parameters: {tool_parameters}")
 
                         mcp_tool = PromptMessageMcpTool(
                             name=str(tool_name),
@@ -307,6 +417,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             current_llm_usage = None
             debug_print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
             debug_print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
+            # debug_print(f"ROUND {iteration_step} prompt_messages: {json.dumps(prompt_messages, ensure_ascii=False, indent=2)}")
+            debug_print(f"ROUND {iteration_step} prompt_messages_tools: {json.dumps([tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__ for tool in prompt_messages_tools], ensure_ascii=False, indent=2)}")
             
            
             if isinstance(chunks, Generator):
