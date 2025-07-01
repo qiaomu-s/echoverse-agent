@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 import traceback
 from collections.abc import Generator
@@ -415,10 +416,10 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             tool_call_names = ""
 
             current_llm_usage = None
-            debug_print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
-            debug_print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
+            # debug_print(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
+            # debug_print(f"ROUND {iteration_step} prompt_messages_tools: {prompt_messages_tools}")
             # debug_print(f"ROUND {iteration_step} prompt_messages: {json.dumps(prompt_messages, ensure_ascii=False, indent=2)}")
-            debug_print(f"ROUND {iteration_step} prompt_messages_tools: {json.dumps([tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__ for tool in prompt_messages_tools], ensure_ascii=False, indent=2)}")
+            # debug_print(f"ROUND {iteration_step} prompt_messages_tools: {json.dumps([tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__ for tool in prompt_messages_tools], ensure_ascii=False, indent=2)}")
             
            
             if isinstance(chunks, Generator):
@@ -511,9 +512,10 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                     else 0,
                 },
             )
-            assistant_message = AssistantPromptMessage(content="", tool_calls=[])
-            if not tool_calls:
-                assistant_message.content = response
+            
+            # Regardless of whether there is a tool call, if there is a response, it is sent to the model as context
+            if response.strip():
+                assistant_message = AssistantPromptMessage(content=response, tool_calls=[])
                 current_thoughts.append(assistant_message)
 
             final_answer += response + "\n"
@@ -629,7 +631,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         }
                         
                 else:
-                    # 执行工具
+                    # invoke tool
                     try:
                         tool_invoke_responses = self.session.tool.invoke(
                             provider_type=ToolProviderType(tool_instance.provider_type),
@@ -640,38 +642,94 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                                 **tool_call_args,
                             },
                         )
-                        result = ""
-                        # 处理工具调用的响应
-                        for response in tool_invoke_responses:
-                            if response.type == ToolInvokeMessage.MessageType.TEXT:
-                                result += cast(
-                                    ToolInvokeMessage.TextMessage, response.message
+                        tool_result = ""
+                        for tool_invoke_response in tool_invoke_responses:
+                            if (
+                                tool_invoke_response.type
+                                == ToolInvokeMessage.MessageType.TEXT
+                            ):
+                                tool_result += cast(
+                                    ToolInvokeMessage.TextMessage,
+                                    tool_invoke_response.message,
                                 ).text
-                            elif response.type == ToolInvokeMessage.MessageType.LINK:
-                                result += (
-                                    f"result link: {cast(ToolInvokeMessage.TextMessage, response.message).text}."
+                            elif (
+                                tool_invoke_response.type
+                                == ToolInvokeMessage.MessageType.LINK
+                            ):
+                                tool_result += (
+                                    "result link: "
+                                    + cast(
+                                        ToolInvokeMessage.TextMessage,
+                                        tool_invoke_response.message,
+                                    ).text
+                                    + "."
                                     + " please tell user to check it."
                                 )
-                            elif response.type in {
+                            elif tool_invoke_response.type in {
                                 ToolInvokeMessage.MessageType.IMAGE_LINK,
                                 ToolInvokeMessage.MessageType.IMAGE,
                             }:
-                                result += (
+                                # Extract the file path or URL from the message
+                                if hasattr(tool_invoke_response.message, "text"):
+                                    file_info = cast(
+                                        ToolInvokeMessage.TextMessage,
+                                        tool_invoke_response.message,
+                                    ).text
+                                    # Try to create a blob message with the file content
+                                    try:
+                                        # If it's a local file path, try to read it
+                                        if file_info.startswith("/files/"):
+                                            import os
+
+                                            if os.path.exists(file_info):
+                                                with open(file_info, "rb") as f:
+                                                    file_content = f.read()
+                                                # Create a blob message with the file content
+                                                blob_response = self.create_blob_message(
+                                                    blob=file_content,
+                                                    meta={
+                                                        "mime_type": "image/png",
+                                                        "filename": os.path.basename(
+                                                            file_info
+                                                        ),
+                                                    },
+                                                )
+                                                yield blob_response
+                                    except Exception:
+                                        logging.exception(
+                                            "Failed to create blob message"
+                                        )
+                                tool_result += (
                                     "image has been created and sent to user already, "
                                     + "you do not need to create it, just tell the user to check it now."
                                 )
-                            elif response.type == ToolInvokeMessage.MessageType.JSON:
+                                # TODO: convert to agent invoke message
+                                yield tool_invoke_response
+                            elif (
+                                tool_invoke_response.type
+                                == ToolInvokeMessage.MessageType.JSON
+                            ):
                                 text = json.dumps(
                                     cast(
-                                        ToolInvokeMessage.JsonMessage, response.message
+                                        ToolInvokeMessage.JsonMessage,
+                                        tool_invoke_response.message,
                                     ).json_object,
                                     ensure_ascii=False,
                                 )
-                                result += f"tool response: {text}."
+                                tool_result += f"tool response: {text}."
+                            elif (
+                                tool_invoke_response.type
+                                == ToolInvokeMessage.MessageType.BLOB
+                            ):
+                                tool_result += "Generated file ... "
+                                # TODO: convert to agent invoke message
+                                yield tool_invoke_response
                             else:
-                                result += f"tool response: {response.message!r}."
+                                tool_result += (
+                                    f"tool response: {tool_invoke_response.message!r}."
+                                )
                     except Exception as e:
-                        result = f"tool invoke error: {e!s}"
+                        tool_result = f"tool invoke error: {e!s}"
                     tool_response = {
                         "tool_call_id": tool_call_id,
                         "tool_call_name": tool_call_name,
@@ -679,7 +737,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                             **tool_instance.runtime_parameters,
                             **tool_call_args,
                         },
-                        "tool_response": result,
+                        "tool_response": tool_result,
                     }
                     debug_print(f"ROUND {iteration_step} runtime_parameters: {tool_instance.runtime_parameters}")
                     debug_print(f"ROUND {iteration_step} tool_call_args: {tool_call_args}")
@@ -708,7 +766,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                         )
                     )
 
-            # 更新工具提示词 (暂时没发现作用)
+            # 更新工具提示词
             for prompt_tool in prompt_messages_tools:
                 if tool_instances.get(prompt_tool.name):
                     self.update_prompt_message_tool(
@@ -739,10 +797,10 @@ class FunctionCallingAgentStrategy(AgentStrategy):
                 },
             )
 
-            # 如果迭代次数为1，则直接返回工具响应
+            # If max_iteration_steps=1, need to return tool responses
             if tool_responses and max_iteration_steps == 1:
                 for resp in tool_responses:
-                    yield self.create_text_message(resp["tool_response"])
+                    yield self.create_text_message(str(resp["tool_response"]))
             iteration_step += 1
 
         # 返回执行消耗
@@ -848,7 +906,8 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         self, prompt_messages: list[PromptMessage]
     ) -> list[PromptMessage]:
         """
-        这个方法用于清理和转换用户消息中的多模态内容（图片、文件等），将其转换为纯文本形式。
+        As for now, gpt supports both fc and vision at the first iteration.
+        We need to remove the image messages from the prompt messages at the first iteration.
         """
         prompt_messages = deepcopy(prompt_messages)
 
@@ -879,6 +938,6 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             *current_thoughts,
         ]
         if len(current_thoughts) != 0:
-            # 在第一轮迭代后，清理和转换用户消息中的多模态内容
+            # clear messages after the first iteration
             prompt_messages = self._clear_user_prompt_image_messages(prompt_messages)
         return prompt_messages
