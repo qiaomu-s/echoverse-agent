@@ -7,6 +7,7 @@ from copy import deepcopy
 from typing import Any, Optional, cast
 
 from utils.mcp_client import create_mcp_client
+from prompt.template import MCP_FUNCTION_CALLING_PROMPT_TEMPLATES
 
 from dify_plugin.entities.agent import AgentInvokeMessage
 from dify_plugin.entities.model import ModelFeature
@@ -36,7 +37,7 @@ from pydantic import BaseModel
 
 api_host = "www.label-studio.top"
 # 控制是否输出调试信息的开关
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 def debug_print(*args, **kwargs):
     """
@@ -44,6 +45,16 @@ def debug_print(*args, **kwargs):
     """
     if DEBUG_MODE:
         print(*args, **kwargs)
+
+def debug_print_bright(*args, **kwargs):
+    """
+    用亮色打印调试信息
+    """
+    if DEBUG_MODE:
+        # 使用ANSI转义码设置亮白色文本
+        print("\033[1;97m", end="")  # 亮白色
+        print(*args, **kwargs)
+        print("\033[0m", end="")  # 重置颜色
 
 class FunctionCallingParams(BaseModel):
     api_key: str
@@ -54,6 +65,7 @@ class FunctionCallingParams(BaseModel):
     model: AgentModelConfig
     tools: list[ToolEntity] | None 
     maximum_iterations: int = 3
+    language: str = "chinese"  # 新增语言参数，默认为中文
     
 
 class PromptMessageMcpTool(PromptMessageTool):
@@ -64,6 +76,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         super().__init__(session)
         self.query = ""
         self.instruction = ""
+        self.language = "chinese"  # 默认语言
 
     @property
     def _user_prompt_message(self) -> UserPromptMessage:
@@ -71,7 +84,14 @@ class FunctionCallingAgentStrategy(AgentStrategy):
 
     @property
     def _system_prompt_message(self) -> SystemPromptMessage:
-        return SystemPromptMessage(content=self.instruction)
+        # 获取MCP专用的系统提示词模板
+        template = MCP_FUNCTION_CALLING_PROMPT_TEMPLATES.get(self.language, MCP_FUNCTION_CALLING_PROMPT_TEMPLATES["chinese"])
+        system_prompt = template["system_prompt"]
+        
+        # 格式化提示词，将用户指令嵌入到模板中
+        formatted_prompt = system_prompt.format(instruction=self.instruction or "")
+        
+        return SystemPromptMessage(content=formatted_prompt)
 
     def _generate_property_description(self, prop_name: str, prop_config: dict) -> str:
         """
@@ -178,6 +198,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
         query = fc_params.query
         self.query = query
         self.instruction = fc_params.instruction # 这里的instruction是从参数中获取的 指令提示词
+        self.language = fc_params.language  # 设置语言参数
         history_prompt_messages = fc_params.model.history_prompt_messages
         history_prompt_messages.insert(0, self._system_prompt_message)
         history_prompt_messages.append(self._user_prompt_message)
@@ -397,6 +418,7 @@ class FunctionCallingAgentStrategy(AgentStrategy):
             )
             yield model_log
             model_config = LLMModelConfig(**model.model_dump(mode="json"))
+            debug_print_bright(f"ROUND {iteration_step} prompt_messages: {prompt_messages}")
             chunks: Generator[LLMResultChunk, None, None] | LLMResult = (
                 self.session.model.llm.invoke(
                     model_config=model_config,
