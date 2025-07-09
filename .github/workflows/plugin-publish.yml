@@ -11,26 +11,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Fetch all history for version comparison
 
       - name: Print working directory # Kept for debugging
         run: |
           pwd
           ls -la
-
-      - name: Download CLI tool
-        run: |
-          # Create bin directory in runner temp
-          mkdir -p $RUNNER_TEMP/bin
-          cd $RUNNER_TEMP/bin
-
-          # Download CLI tool
-          wget https://github.com/langgenius/dify-plugin-daemon/releases/download/0.1.2/dify-plugin-linux-amd64
-          chmod +x dify-plugin-linux-amd64
-
-          # Show download location and file
-          echo "CLI tool location:"
-          pwd
-          ls -la dify-plugin-linux-amd64
 
       - name: Get basic info from manifest # Changed step name and content
         id: get_basic_info
@@ -48,7 +35,51 @@ jobs:
           echo "Plugin author: $AUTHOR"
           echo "author=$AUTHOR" >> $GITHUB_OUTPUT
 
+      - name: Check version changes
+        id: check_version
+        run: |
+          CURRENT_VERSION="${{ steps.get_basic_info.outputs.version }}"
+          echo "Current version: $CURRENT_VERSION"
+
+          # Get the latest tag (if any)
+          LATEST_TAG=$(git tag -l --sort=-version:refname | head -n1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous tags found, proceeding with first release"
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "latest_version=none" >> $GITHUB_OUTPUT
+          else
+            # Extract version from tag (remove 'v' prefix if present)
+            LATEST_VERSION=$(echo $LATEST_TAG | sed 's/^v//')
+            echo "Latest version: $LATEST_VERSION"
+            echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            
+            if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+              echo "Version changed from $LATEST_VERSION to $CURRENT_VERSION"
+              echo "version_changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "Version unchanged ($CURRENT_VERSION), skipping build"
+              echo "version_changed=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Download CLI tool
+        if: steps.check_version.outputs.version_changed == 'true'
+        run: |
+          # Create bin directory in runner temp
+          mkdir -p $RUNNER_TEMP/bin
+          cd $RUNNER_TEMP/bin
+
+          # Download CLI tool
+          wget https://github.com/langgenius/dify-plugin-daemon/releases/download/0.1.2/dify-plugin-linux-amd64
+          chmod +x dify-plugin-linux-amd64
+
+          # Show download location and file
+          echo "CLI tool location:"
+          pwd
+          ls -la dify-plugin-linux-amd64
+
       - name: Package Plugin
+        if: steps.check_version.outputs.version_changed == 'true'
         id: package
         run: |
           # Use the downloaded CLI tool to package
@@ -70,6 +101,7 @@ jobs:
           tree || ls -R
 
       - name: Create tag and GitHub Release
+        if: steps.check_version.outputs.version_changed == 'true'
         id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.PLUGIN_ACTION }}
@@ -116,6 +148,7 @@ jobs:
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Checkout target repo
+        if: steps.check_version.outputs.version_changed == 'true'
         uses: actions/checkout@v3
         with:
           # Use author variable for repository
@@ -126,6 +159,7 @@ jobs:
           persist-credentials: true # Persist credentials for subsequent git operations
 
       - name: Prepare and create PR
+        if: steps.check_version.outputs.version_changed == 'true'
         run: |
           # Debug info (kept)
           echo "Debug: Current directory $(pwd)"
@@ -169,6 +203,7 @@ jobs:
           sleep 10  # Wait 10 seconds for branch sync
 
       - name: Create PR via GitHub API
+        if: steps.check_version.outputs.version_changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.PLUGIN_ACTION }} # Use the provided token for authentication
         run: |
@@ -187,3 +222,6 @@ jobs:
           echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
           echo "Current directory contents:"
           ls -R
+          echo "Version check result: ${{ steps.check_version.outputs.version_changed }}"
+          echo "Current version: ${{ steps.get_basic_info.outputs.version }}"
+          echo "Latest version: ${{ steps.check_version.outputs.latest_version }}"
